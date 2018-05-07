@@ -1,0 +1,148 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Testing ansible with CloudFormation'
+
+Parameters:
+  OwnerName:
+    Default: renejk
+    Type: String
+
+  VpcCIDR:
+    Default: 10.0.0.0/16
+    Type: String
+  
+  PublicSubnet1CIDR:
+    Default: 10.0.0.0/24
+    Type: String
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      Tags:
+        - Key: Name
+          Value: !Join ['-', [vpc, !Ref OwnerName]]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Join
+          - '-'
+          - -  igw
+            -  !Ref OwnerName
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+  
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [0, !GetAZs '']
+      CidrBlock: !Ref PublicSubnet1CIDR
+      MapPublicIpOnLaunch: True
+      Tags:
+        - Key: Name
+          Value: !Join
+          - '-'
+          - -  subnet-public-1
+            -  !Ref OwnerName
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Join
+          - '-'
+          - -  public-table
+            -  !Ref OwnerName
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: 'Allow SSH and web from Internet'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          CidrIp: 0.0.0.0/0
+          FromPort: '80'
+          ToPort: '80'
+        - IpProtocol: tcp
+          CidrIp: 0.0.0.0/0
+          FromPort: '443'
+          ToPort: '443'
+        - IpProtocol: tcp
+          CidrIp: 0.0.0.0/0
+          FromPort: '22'
+          ToPort: '22'
+      Tags:
+        - Key: Name
+          Value: !Join
+          - '-'
+          - -  security-public
+            -  !Ref OwnerName
+            
+  PublicEc2Instance:
+    Type: AWS::EC2::Instance
+    DependsOn: PublicSubnet1
+    Properties:
+      ImageId: ami-25615740
+      InstanceType: t2.micro
+      SecurityGroupIds: 
+        - !Ref PublicSecurityGroup
+      SubnetId: !Ref PublicSubnet1
+      KeyName: kp-rene
+      UserData: 
+        Fn::Base64: !Sub |
+          #!/bin/bash -xe
+          sudo yum -y update
+          sudo yum install -y yum-utils device-mapper-persistent-data lvm2
+          sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+          sudo yum install -y docker
+          sudo service docker start
+          sudo usermod -a -G docker ec2-user
+          mkdir /home/ec2-user/jenkins-home
+          sudo chown -R 1000:1000 /home/ec2-user/jenkins-home
+          docker run -d -p 80:8080 -p 50000:50000 -v /home/ec2-user/jenkins-home:/var/jenkins_home jenkins
+      Tags:
+        - Key: Name
+          Value: !Join
+          - '-'
+          - -  ec2-instance-public
+            -  !Ref OwnerName
+
+Outputs:
+  VPC:
+    Value: !Ref VPC
+  
+  PublicSubnets:
+    Value: !Join
+    - ','
+    - -  !Ref PublicSubnet1
+
+  PublicEc2Instance:
+    Value: !Ref PublicEc2Instance
+    
+  PublicSecurityGroup:
+    Value: !Ref PublicSecurityGroup
